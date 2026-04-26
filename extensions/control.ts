@@ -155,7 +155,7 @@ interface SocketState {
 // Summarization
 // ============================================================================
 
-const CODEX_MODEL_ID = "gpt-5.1-codex-mini";
+const CODEX_MODEL_IDS = ["gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-5.1"];
 const HAIKU_MODEL_ID = "claude-haiku-4-5";
 
 const SUMMARIZATION_SYSTEM_PROMPT = `You are a conversation summarizer. Create concise, accurate summaries that preserve key information, decisions, and outcomes.`;
@@ -173,10 +173,12 @@ async function selectSummarizationModel(
 	currentModel: Model<Api> | undefined,
 	modelRegistry: ModelRegistry,
 ): Promise<Model<Api> | undefined> {
-	const codexModel = modelRegistry.find("openai-codex", CODEX_MODEL_ID);
-	if (codexModel) {
-		const auth = await modelRegistry.getApiKeyAndHeaders(codexModel);
-		if (auth.ok) return codexModel;
+	for (const codexModelId of CODEX_MODEL_IDS) {
+		const codexModel = modelRegistry.find("openai-codex", codexModelId);
+		if (codexModel) {
+			const auth = await modelRegistry.getApiKeyAndHeaders(codexModel);
+			if (auth.ok) return codexModel;
+		}
 	}
 
 	const haikuModel = modelRegistry.find("anthropic", HAIKU_MODEL_ID);
