@@ -1,9 +1,10 @@
 /**
  * UV Extension - Redirects Python tooling to uv equivalents
  *
- * This extension wraps the bash tool to prepend intercepted-commands to PATH,
- * which contains shim scripts that intercept common Python tooling commands
- * and redirect agents to use uv instead.
+ * This extension prepends intercepted-commands to the process PATH, which is
+ * inherited by Pi bash executions. The directory contains shim scripts that
+ * intercept common Python tooling commands and redirect agents to use uv
+ * instead.
  *
  * Intercepted commands:
  * - pip/pip3: Blocked with suggestions to use `uv add` or `uv run --with`
@@ -21,12 +22,27 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createBashTool } from "@earendil-works/pi-coding-agent";
-import { dirname, join } from "path";
+import { delimiter, dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const interceptedCommandsPath = join(__dirname, "..", "intercepted-commands");
+
+function prependInterceptedCommandsToPath(): void {
+  const pathKey =
+    Object.keys(process.env).find((key) => key.toLowerCase() === "path") ??
+    "PATH";
+  const currentPath = process.env[pathKey] ?? "";
+  const pathEntries = currentPath.split(delimiter).filter(Boolean);
+
+  if (pathEntries.includes(interceptedCommandsPath)) {
+    return;
+  }
+
+  process.env[pathKey] = [interceptedCommandsPath, ...pathEntries].join(
+    delimiter,
+  );
+}
 
 function getBlockedCommandMessage(command: string): string | null {
   // Match commands at the start of a shell segment (start/newline/; /&& /|| /|)
@@ -107,17 +123,37 @@ function getBlockedCommandMessage(command: string): string | null {
 }
 
 export default function (pi: ExtensionAPI) {
-  const cwd = process.cwd();
-  const bashTool = createBashTool(cwd, {
-    commandPrefix: `export PATH="${interceptedCommandsPath}:$PATH"`,
-    spawnHook: (ctx) => {
-      const blockedMessage = getBlockedCommandMessage(ctx.command);
-      if (blockedMessage) {
-        throw new Error(blockedMessage);
-      }
-      return ctx;
-    },
+  prependInterceptedCommandsToPath();
+
+  pi.on("tool_call", (event) => {
+    if (event.toolName !== "bash") {
+      return;
+    }
+
+    const input = event.input as { command?: unknown };
+    if (typeof input.command !== "string") {
+      return;
+    }
+
+    const blockedMessage = getBlockedCommandMessage(input.command);
+    if (blockedMessage) {
+      return { block: true, reason: blockedMessage };
+    }
   });
 
-  pi.registerTool(bashTool);
+  pi.on("user_bash", (event) => {
+    const blockedMessage = getBlockedCommandMessage(event.command);
+    if (!blockedMessage) {
+      return;
+    }
+
+    return {
+      result: {
+        output: blockedMessage,
+        exitCode: 1,
+        cancelled: false,
+        truncated: false,
+      },
+    };
+  });
 }
